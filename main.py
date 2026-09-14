@@ -21,8 +21,8 @@ models_ = {
 loaders_ = {
     'its_train': ITS_train_loader_lmdb,
     'its_test': ITS_test_loader,
+    'ots_train': OTS_train_loader_all,
     'ots_test': OTS_test_loader,
-    # 'ots_train': OTS_train_loader_all,
 }
 
 start_time = time.time()
@@ -57,14 +57,13 @@ def clcr_train(train_model, train_loader, test_loader, optim, criterion):
     initial_loss_weight = opt.loss_weight
     if opt.resume and os.path.exists(opt.model_dir):
         print(f'resume from {opt.model_dir}')
-        ckp = torch.load(opt.model_dir)
-        print(opt.best_model_dir)
-        losses = ckp['losses']
-        start_step = ckp['step']
-        max_ssim = ckp['max_ssim']
-        max_psnr = ckp['max_psnr']
-        psnrs = ckp['psnrs']
-        ssims = ckp['ssims']
+        ckp = torch.load(opt.model_dir, map_location=opt.device, weights_only=False)
+        losses = ckp.get('losses', [])
+        start_step = ckp.get('step', 0)
+        max_ssim = ckp.get('max_ssim', 0)
+        max_psnr = ckp.get('max_psnr', 0)
+        psnrs = ckp.get('psnrs', [])
+        ssims = ckp.get('ssims', [])
         weights = curriculum_weight(best_psnr)
         print(f'start_step:{start_step} start training ---')
     else:
@@ -79,21 +78,31 @@ def clcr_train(train_model, train_loader, test_loader, optim, criterion):
             lr = lr_schedule_cosdecay(step, T)
             for param_group in optim.param_groups:
                 param_group["lr"] = lr
-        x, y, n1, n2, n3, n4, n5, n6, inp = next(iter(train_loader))
-        x = x.to(opt.device)
-        y = y.to(opt.device)
-        n1 = n1.to(opt.device)
-        n2 = n2.to(opt.device)
-        n3 = n3.to(opt.device)
-        n4 = n4.to(opt.device)
-        n5 = n5.to(opt.device)
-        n6 = n6.to(opt.device)
-        out = train_model(x)
-        pixel_loss = criterion[0](out, y)
-        loss2 = 0
-        if opt.clcrloss:
-            loss2 = criterion[1](out, y, n1, n2, n3, n4, n5, n6, x, weights)
-        loss = pixel_loss + opt.loss_weight * loss2
+        batch = next(iter(train_loader))
+        if len(batch) == 2:
+            x, y = batch
+            x = x.to(opt.device)
+            y = y.to(opt.device)
+            out = train_model(x)
+            pixel_loss = criterion[0](out, y)
+            loss2 = torch.tensor(0.0, device=opt.device)
+            loss = pixel_loss
+        else:
+            x, y, n1, n2, n3, n4, n5, n6, inp = batch
+            x = x.to(opt.device)
+            y = y.to(opt.device)
+            n1 = n1.to(opt.device)
+            n2 = n2.to(opt.device)
+            n3 = n3.to(opt.device)
+            n4 = n4.to(opt.device)
+            n5 = n5.to(opt.device)
+            n6 = n6.to(opt.device)
+            out = train_model(x)
+            pixel_loss = criterion[0](out, y)
+            loss2 = torch.tensor(0.0, device=opt.device)
+            if opt.clcrloss:
+                loss2 = criterion[1](out, y, n1, n2, n3, n4, n5, n6, x, weights)
+            loss = pixel_loss + opt.loss_weight * loss2
         loss.backward()
         if opt.clip:
             torch.nn.utils.clip_grad_norm_(train_model.parameters(), 0.2)
@@ -102,8 +111,9 @@ def clcr_train(train_model, train_loader, test_loader, optim, criterion):
         for param in train_model.parameters():
             param.grad = None
         losses.append(loss.item())
+        cr_val = opt.loss_weight * (loss2.item() if isinstance(loss2, torch.Tensor) else loss2)
         print(
-            f'\rpixel loss : {pixel_loss.item():.5f}| cr loss : {opt.loss_weight * loss2.item():.5f}| step :{step}/{opt.steps}|lr :{lr :.7f} |time_used :{(time.time() - start_time) / 60 :.1f}',
+            f'\rpixel loss : {pixel_loss.item():.5f}| cr loss : {cr_val:.5f}| step :{step}/{opt.steps}|lr :{lr :.7f} |time_used :{(time.time() - start_time) / 60 :.1f}',
             end='', flush=True)
 
         if step % opt.eval_step == 0:
@@ -122,12 +132,13 @@ def clcr_train(train_model, train_loader, test_loader, optim, criterion):
                 }, step)
             ssims.append(ssim_eval)
             psnrs.append(psnr_eval)
+            raw_model = train_model.module if hasattr(train_model, 'module') else train_model
             torch.save({
                 'step': step,
                 'ssims': ssims,
                 'psnrs': psnrs,
                 'losses': losses,
-                'model': train_model.state_dict(),
+                'model': raw_model.state_dict(),
                 'weight': weights
             }, opt.latest_model_dir)
             if ssim_eval > max_ssim and psnr_eval > max_psnr:
@@ -141,7 +152,7 @@ def clcr_train(train_model, train_loader, test_loader, optim, criterion):
                     'ssims': ssims,
                     'psnrs': psnrs,
                     'losses': losses,
-                    'model': train_model.state_dict(),
+                    'model': raw_model.state_dict(),
                     'weight': weights
                 }, opt.model_dir)
                 print(f'\n model saved at step :{step}| max_psnr:{max_psnr:.4f}|max_ssim:{max_ssim:.4f}')
@@ -154,18 +165,20 @@ def clcr_train(train_model, train_loader, test_loader, optim, criterion):
 
 def test(test_model, loader_test):
     test_model.eval()
-    torch.cuda.empty_cache()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
     ssims = []
     psnrs = []
-    for i, (inputs, targets) in enumerate(loader_test):
-        inputs = inputs.to(opt.device)
-        targets = targets.to(opt.device)
-        pred = test_model(inputs)
-        ssim1 = ssim(pred, targets).item()
-        psnr1 = psnr(pred, targets)
-        ssims.append(ssim1)
-        psnrs.append(psnr1)
-        return np.mean(ssims), np.mean(psnrs)
+    with torch.no_grad():
+        for i, (inputs, targets) in enumerate(loader_test):
+            inputs = inputs.to(opt.device)
+            targets = targets.to(opt.device)
+            pred = test_model(inputs)
+            ssim1 = ssim(pred.cpu(), targets.cpu()).item()
+            psnr1 = psnr(pred.cpu(), targets.cpu())
+            ssims.append(ssim1)
+            psnrs.append(psnr1)
+    return np.mean(ssims), np.mean(psnrs)
 
 
 if __name__ == "__main__":
@@ -175,7 +188,7 @@ if __name__ == "__main__":
     net = net.to(opt.device)
     pytorch_total_params = sum(p.nelement() for p in net.parameters() if p.requires_grad)
     print("Total_params: ==> {}".format(pytorch_total_params / 1e6))
-    if opt.device == 'cuda':
+    if opt.device == 'cuda' and torch.cuda.device_count() > 1:
         net = torch.nn.DataParallel(net)
         cudnn.benchmark = True
     criterion = [nn.L1Loss().to(opt.device)]

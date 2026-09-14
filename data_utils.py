@@ -31,7 +31,7 @@ class RESIDE_Dataset(data.Dataset):
         print('crop size', size)
         self.train = train
         self.format = format
-        self.haze_imgs_dir = os.listdir(os.path.join(path, 'hazy'))
+        self.haze_imgs_dir = [f for f in os.listdir(os.path.join(path, 'hazy')) if not f.startswith('.')]
         self.haze_imgs = [os.path.join(path, 'hazy', img) for img in self.haze_imgs_dir]
         self.clear_dir = os.path.join(path, 'clear')
 
@@ -39,12 +39,17 @@ class RESIDE_Dataset(data.Dataset):
         haze = Image.open(self.haze_imgs[index])
         if isinstance(self.size, int):
             while haze.size[0] < self.size or haze.size[1] < self.size:
-                index = random.randint(0, 20000)
+                index = random.randint(0, len(self.haze_imgs) - 1)
                 haze = Image.open(self.haze_imgs[index])
         img = self.haze_imgs[index]
-        id = img.split('/')[-1].split('_')[0]
-        clear_name = id + self.format
-        clear = Image.open(os.path.join(self.clear_dir, clear_name))
+        haze_filename = os.path.basename(img)
+        id = haze_filename.split('_')[0]
+        clear_candidate = os.path.join(self.clear_dir, id + '.png')
+        if not os.path.exists(clear_candidate):
+            clear_candidate = os.path.join(self.clear_dir, id + '.jpg')
+        if not os.path.exists(clear_candidate):
+            clear_candidate = os.path.join(self.clear_dir, haze_filename)
+        clear = Image.open(clear_candidate)
         clear = tfs.CenterCrop(haze.size[::-1])(clear)
         if not isinstance(self.size, str):
             i, j, h, w = tfs.RandomCrop.get_params(haze, output_size=(self.size, self.size))
@@ -164,14 +169,29 @@ class DatasetLMDB(data.Dataset):
         return self.__class__.__name__ + ' (' + self.db_path + ')'
 
 
-ITS_train_loader_lmdb = DataLoader(
-    dataset=DatasetLMDB(os.path.join(path, 'ITS/ITS.lmdb'), size=crop_size), batch_size=BS,
-    shuffle=True, pin_memory=True)
-ITS_test_loader = DataLoader(dataset=RESIDE_Dataset(os.path.join(path, 'SOTS/indoor'), train=False, size='whole img'),
+its_lmdb_path = os.path.join(path, 'ITS/ITS.lmdb')
+if os.path.exists(its_lmdb_path):
+    ITS_train_loader_lmdb = DataLoader(
+        dataset=DatasetLMDB(its_lmdb_path, size=crop_size), batch_size=BS,
+        shuffle=True, pin_memory=True)
+else:
+    ITS_train_loader_lmdb = DataLoader(
+        dataset=RESIDE_Dataset(os.path.join(path, 'SOTS/indoor'), train=True, size=crop_size, format='.png'),
+        batch_size=BS, shuffle=True, pin_memory=True)
+
+ITS_test_loader = DataLoader(dataset=RESIDE_Dataset(os.path.join(path, 'SOTS/indoor'), train=False, size='whole img', format='.png'),
                              batch_size=1, shuffle=False)
-# OTS_train_loader_all = DataLoader(
-#     dataset=DatasetLMDB(os.path.join(path, 'OTS/OTS.lmdb'), size=crop_size), batch_size=BS,
-#     shuffle=True, pin_memory=True)
+
+ots_lmdb_path = os.path.join(path, 'OTS/OTS.lmdb')
+if os.path.exists(ots_lmdb_path):
+    OTS_train_loader_all = DataLoader(
+        dataset=DatasetLMDB(ots_lmdb_path, size=crop_size), batch_size=BS,
+        shuffle=True, pin_memory=True)
+else:
+    OTS_train_loader_all = DataLoader(
+        dataset=RESIDE_Dataset(os.path.join(path, 'SOTS/outdoor'), train=True, size=crop_size, format='.png'),
+        batch_size=BS, shuffle=True, pin_memory=True)
+
 OTS_test_loader = DataLoader(
     dataset=RESIDE_Dataset(os.path.join(path, 'SOTS/outdoor'), train=False, size='whole img', format='.png'),
     batch_size=1,

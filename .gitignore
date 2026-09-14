@@ -1,0 +1,32 @@
+# Python & Virtual Environments
+.venv/
+venv/
+ENV/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+# IDEs & OS
+.idea/
+.vscode/
+.DS_Store
+*.swp
+
+# Datasets (large files)
+data/
+numpy_files/
+
+# Model Checkpoints (GitHub rejects files > 100MB)
+trained_models/
+*.pk
+*.pkl
+*.pth
+*.pt
+*.onnx
+
+# Temporary outputs & logs
+results/
+logs/
+samples/

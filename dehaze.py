@@ -37,17 +37,17 @@ elif dataset == 'outdoor':
     clear_dir = 'data/SOTS/outdoor/clear/'
     model_dir = 'trained_models/OTS.pkl'
 
-device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
+device = 'cuda:0' if torch.cuda.is_available() else ('mps' if torch.backends.mps.is_available() else 'cpu')
 
 net = C2PNet(gps=3, blocks=19)
-ckp = torch.load(model_dir)
+ckp = torch.load(model_dir, map_location=device, weights_only=False)
 net = net.to(device)
 net.load_state_dict(ckp['model'])
 net.eval()
 psnr_list = []
 ssim_list = []
 
-for im in tqdm(os.listdir(haze_dir)):
+for im in tqdm([f for f in os.listdir(haze_dir) if not f.startswith('.')]):
     haze = Image.open(os.path.join(haze_dir, im)).convert('RGB')
     if dataset == 'indoor' or dataset == 'outdoor':
         clear_im = im.split('_')[0] + '.png'

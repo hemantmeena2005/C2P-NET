@@ -34,7 +34,7 @@ parser.add_argument('--beta1', default=0.9, type=float, help='beta1')
 parser.add_argument('--beta2', default=0.999, type=float, help='beta2')
 
 opt = parser.parse_args()
-opt.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+opt.device = 'cuda' if torch.cuda.is_available() else ('mps' if torch.backends.mps.is_available() else 'cpu')
 model_name = opt.trainset + '_' + opt.net.split('.')[0] + '_' + str(opt.gps) + '_' + str(opt.blocks) + '_' + str(
     opt.name)
 
