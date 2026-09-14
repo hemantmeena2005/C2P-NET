@@ -14,17 +14,9 @@ __pycache__/
 .DS_Store
 *.swp
 
-# Datasets (large files)
+# Datasets (exclude large raw dataset directories)
 data/
 numpy_files/
-
-# Model Checkpoints (GitHub rejects files > 100MB)
-trained_models/
-*.pk
-*.pkl
-*.pth
-*.pt
-*.onnx
 
 # Temporary outputs & logs
 results/
